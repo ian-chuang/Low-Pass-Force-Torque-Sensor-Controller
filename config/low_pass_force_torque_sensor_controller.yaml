@@ -1,0 +1,3 @@
+force_torque_sensor_controller:
+  type: force_torque_sensor_controller/LowPassForceTorqueSensorController
+  publish_rate: 50
