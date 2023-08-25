@@ -9,6 +9,12 @@ find_package(catkin REQUIRED COMPONENTS
   pluginlib
   realtime_tools
   roscpp
+  dynamic_reconfigure
+)
+
+## Generate dynamic reconfigure parameters in the 'cfg' folder
+generate_dynamic_reconfigure_options(
+  cfg/LowPassFilter.cfg
 )
 
 # Declare catkin package
@@ -19,6 +25,7 @@ catkin_package(
     hardware_interface
     realtime_tools
     roscpp
+    dynamic_reconfigure
   INCLUDE_DIRS include
   LIBRARIES ${PROJECT_NAME}
 )

@@ -40,6 +40,10 @@
 // Low pass filter
 #include <low_pass_force_torque_sensor_controller/low_pass_filter.h>
 
+// Dynamic reconfigure
+#include <dynamic_reconfigure/server.h>
+#include <low_pass_force_torque_sensor_controller/LowPassFilterConfig.h>
+
 namespace low_pass_force_torque_sensor_controller
 {
 
@@ -55,12 +59,23 @@ public:
   virtual void stopping(const ros::Time& /*time*/);
 
 private:
-  std::vector<hardware_interface::ForceTorqueSensorHandle> sensors_;
+
+  // Force control specific dynamic reconfigure
+  typedef low_pass_force_torque_sensor_controller::LowPassFilterConfig Config;
+
+  void dynamicReconfigureCallback(Config& config, uint32_t level);
+
+  std::shared_ptr<dynamic_reconfigure::Server<Config> > dyn_conf_server_;
+  dynamic_reconfigure::Server<Config>::CallbackType callback_type_;
+
+  std::string sensor_name_;
+  hardware_interface::ForceTorqueSensorHandle sensor_;
+  std::array<double, 6> wrench_;
   typedef std::shared_ptr<realtime_tools::RealtimePublisher<geometry_msgs::WrenchStamped> > RtPublisherPtr;
-  std::vector<std::vector<LowPassFilter>> filters_;
-  std::vector<RtPublisherPtr> realtime_wrench_pubs_;
-  std::vector<RtPublisherPtr> realtime_filter_pubs_;
-  std::vector<ros::Time> last_publish_times_;
+  std::vector<LowPassFilter> filters_;
+  RtPublisherPtr realtime_wrench_pub_;
+  RtPublisherPtr realtime_filter_pub_;
+  ros::Time last_publish_time_;
   double publish_rate_;
 };
 

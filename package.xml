@@ -28,6 +28,8 @@
 
   <exec_depend>controller_manager</exec_depend> 
 
+  <depend>dynamic_reconfigure</depend>
+
   <export>
     <controller_interface plugin="${prefix}/low_pass_force_torque_sensor_plugin.xml"/>
   </export>

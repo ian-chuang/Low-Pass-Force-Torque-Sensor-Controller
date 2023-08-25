@@ -1,3 +1,4 @@
 force_torque_sensor_controller:
   type: force_torque_sensor_controller/LowPassForceTorqueSensorController
+  name: wrench
   publish_rate: 50

@@ -28,79 +28,129 @@
 
 /// \author: Adolfo Rodriguez Tsouroukdissian
 
-
 #include "low_pass_force_torque_sensor_controller/low_pass_force_torque_sensor_controller.h"
 
 #include <pluginlib/class_list_macros.hpp>
 
-
 namespace low_pass_force_torque_sensor_controller
 {
 
-  bool LowPassForceTorqueSensorController::init(hardware_interface::ForceTorqueSensorInterface* hw, ros::NodeHandle &root_nh, ros::NodeHandle& controller_nh)
+  bool LowPassForceTorqueSensorController::init(hardware_interface::ForceTorqueSensorInterface *hw, ros::NodeHandle &root_nh, ros::NodeHandle &controller_nh)
   {
-    // get all joint states from the hardware interface
-    const std::vector<std::string>& sensor_names = hw->getNames();
-    for (unsigned i=0; i<sensor_names.size(); i++)
-      ROS_DEBUG("Got sensor %s", sensor_names[i].c_str());
-
-    // get publishing period
-    if (!controller_nh.getParam("publish_rate", publish_rate_)){
-      ROS_ERROR("Parameter 'publish_rate' not set");
+    if (!controller_nh.getParam("sensor_name", sensor_name_))
+    {
+      ROS_ERROR_STREAM("Failed to load " << controller_nh.getNamespace() + "/sensor_name"
+                                         << " from parameter server");
       return false;
     }
 
-    for (unsigned i=0; i<sensor_names.size(); i++){
-      // sensor handle
-      sensors_.push_back(hw->getHandle(sensor_names[i]));
-
-      // realtime publisher
-      RtPublisherPtr rt_pub(new realtime_tools::RealtimePublisher<geometry_msgs::WrenchStamped>(root_nh, sensor_names[i], 4));
-      realtime_wrench_pubs_.push_back(rt_pub);
+    // get publishing period
+    if (!controller_nh.getParam("publish_rate", publish_rate_))
+    {
+      ROS_ERROR_STREAM("Failed to load " << controller_nh.getNamespace() + "/publish_rate"
+                                         << " from parameter server");
+      return false;
     }
 
-    // Last published times
-    last_publish_times_.resize(sensor_names.size());
+    // sensor handle
+    sensor_ = hw->getHandle(sensor_name_);
+
+    // Connect dynamic reconfigure and overwrite the default values with values
+    // on the parameter server. This is done automatically if parameters with
+    // the according names exist.
+    callback_type_ = std::bind(
+        &LowPassForceTorqueSensorController::dynamicReconfigureCallback, this, std::placeholders::_1, std::placeholders::_2);
+    dyn_conf_server_.reset(new dynamic_reconfigure::Server<Config>(controller_nh));
+    dyn_conf_server_->setCallback(callback_type_);
+
+    // realtime publisher
+    RtPublisherPtr wrench_pub(new realtime_tools::RealtimePublisher<geometry_msgs::WrenchStamped>(root_nh, sensor_name_, 4));
+    realtime_wrench_pub_ = wrench_pub;
+    RtPublisherPtr filter_pub(new realtime_tools::RealtimePublisher<geometry_msgs::WrenchStamped>(root_nh, sensor_name_ + "_filtered", 4));
+    realtime_filter_pub_ = filter_pub;
+
     return true;
   }
 
-  void LowPassForceTorqueSensorController::starting(const ros::Time& time)
+  void LowPassForceTorqueSensorController::starting(const ros::Time &time)
   {
-    // initialize time
-    for (unsigned i=0; i<last_publish_times_.size(); i++){
-      last_publish_times_[i] = time;
-    }
+    last_publish_time_ = time;
   }
 
-  void LowPassForceTorqueSensorController::update(const ros::Time& time, const ros::Duration& /*period*/)
+  void LowPassForceTorqueSensorController::update(const ros::Time &time, const ros::Duration & /*period*/)
   {
-    // limit rate of publishing
-    for (unsigned i=0; i<realtime_wrench_pubs_.size(); i++){
-      if (publish_rate_ > 0.0 && last_publish_times_[i] + ros::Duration(1.0/publish_rate_) < time){
-        // try to publish
-        if (realtime_wrench_pubs_[i]->trylock()){
-          // we're actually publishing, so increment time
-          last_publish_times_[i] = last_publish_times_[i] + ros::Duration(1.0/publish_rate_);
+    if (publish_rate_ > 0.0 && last_publish_time_ + ros::Duration(1.0 / publish_rate_) < time)
+    {
+      std::string frame_id = sensor_.getFrameId();
+      wrench_[0] = sensor_.getForce()[0];
+      wrench_[1] = sensor_.getForce()[1];
+      wrench_[2] = sensor_.getForce()[2];
+      wrench_[3] = sensor_.getTorque()[0];
+      wrench_[4] = sensor_.getTorque()[1];
+      wrench_[5] = sensor_.getTorque()[2];
 
-          // populate message
-          realtime_wrench_pubs_[i]->msg_.header.stamp = time;
-          realtime_wrench_pubs_[i]->msg_.header.frame_id = sensors_[i].getFrameId();
+      std::array<double, 6> filtered_wrench;
+      for (size_t i = 0; i < 6; ++i)
+      {
+        filtered_wrench[i] = filters_[i].filter(wrench_[i]);
+      }
 
-          realtime_wrench_pubs_[i]->msg_.wrench.force.x  = sensors_[i].getForce()[0];
-          realtime_wrench_pubs_[i]->msg_.wrench.force.y  = sensors_[i].getForce()[1];
-          realtime_wrench_pubs_[i]->msg_.wrench.force.z  = sensors_[i].getForce()[2];
-          realtime_wrench_pubs_[i]->msg_.wrench.torque.x = sensors_[i].getTorque()[0];
-          realtime_wrench_pubs_[i]->msg_.wrench.torque.y = sensors_[i].getTorque()[1];
-          realtime_wrench_pubs_[i]->msg_.wrench.torque.z = sensors_[i].getTorque()[2];
+      // try to publish
+      if (realtime_wrench_pub_->trylock())
+      {
+        // we're actually publishing, so increment time
+        last_publish_time_ = last_publish_time_ + ros::Duration(1.0 / publish_rate_);
 
-          realtime_wrench_pubs_[i]->unlockAndPublish();
-        }
+        // populate message
+        realtime_wrench_pub_->msg_.header.stamp = time;
+        realtime_wrench_pub_->msg_.header.frame_id = frame_id;
+
+        realtime_wrench_pub_->msg_.wrench.force.x = wrench_[0];
+        realtime_wrench_pub_->msg_.wrench.force.y = wrench_[1];
+        realtime_wrench_pub_->msg_.wrench.force.z = wrench_[2];
+        realtime_wrench_pub_->msg_.wrench.torque.x = wrench_[3];
+        realtime_wrench_pub_->msg_.wrench.torque.y = wrench_[4];
+        realtime_wrench_pub_->msg_.wrench.torque.z = wrench_[5];
+
+        realtime_wrench_pub_->unlockAndPublish();
+      }
+
+      // try to publish
+      if (realtime_filter_pub_->trylock()) {
+        // we're actually publishing, so increment time
+        last_publish_time_ = last_publish_time_ + ros::Duration(1.0 / publish_rate_);
+
+        // populate message
+        realtime_filter_pub_->msg_.header.stamp = time;
+        realtime_filter_pub_->msg_.header.frame_id = frame_id;
+
+        realtime_filter_pub_->msg_.wrench.force.x = filtered_wrench[0];
+        realtime_filter_pub_->msg_.wrench.force.y = filtered_wrench[1];
+        realtime_filter_pub_->msg_.wrench.force.z = filtered_wrench[2];
+        realtime_filter_pub_->msg_.wrench.torque.x = filtered_wrench[3];
+        realtime_filter_pub_->msg_.wrench.torque.y = filtered_wrench[4];
+        realtime_filter_pub_->msg_.wrench.torque.z = filtered_wrench[5];
+
+        realtime_filter_pub_->unlockAndPublish();
       }
     }
   }
 
-  void LowPassForceTorqueSensorController::stopping(const ros::Time& /*time*/)
-  {}
+  void LowPassForceTorqueSensorController::stopping(const ros::Time & /*time*/)
+  {
+  }
+
+  void LowPassForceTorqueSensorController::dynamicReconfigureCallback(Config& config,
+                                                                              uint32_t level)
+  {
+    // Low-pass filters for the joint positions
+    for (size_t i = 0; i < 6; ++i)
+    {
+      filters_[i] = LowPassFilter(config.low_pass_filter_coeff);
+      filters_[i].reset(wrench_[i]);
+    }  
+    ROS_INFO("%s low-pass filter coefficients changed to: %f", sensor_name_.c_str(), config.low_pass_filter_coeff);
+  }
 
 }
 
