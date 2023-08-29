@@ -22,6 +22,7 @@ To integrate the low-pass force-torque sensor controller into your `ros_control`
 low_pass_force_torque_sensor_controller:
   type: force_torque_sensor_controller/LowPassForceTorqueSensorController  # Specify the controller type as LowPassForceTorqueSensorController
   name: wrench  # Specify the name of the force torque sensor interface to be published
+  low_pass_filter_coeff: 500 # coefficient for filter strength, higher value -> more filtering 
   publish_rate: 50  # Specify the rate (in Hz) at which the controller publishes data
 ```
 

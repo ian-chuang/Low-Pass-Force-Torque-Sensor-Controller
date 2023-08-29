@@ -37,9 +37,11 @@ namespace low_pass_force_torque_sensor_controller
 
   bool LowPassForceTorqueSensorController::init(hardware_interface::ForceTorqueSensorInterface *hw, ros::NodeHandle &root_nh, ros::NodeHandle &controller_nh)
   {
-    if (!controller_nh.getParam("sensor_name", sensor_name_))
+    std::fill(wrench_.begin(), wrench_.end(), 0);
+
+    if (!controller_nh.getParam("name", sensor_name_))
     {
-      ROS_ERROR_STREAM("Failed to load " << controller_nh.getNamespace() + "/sensor_name"
+      ROS_ERROR_STREAM("Failed to load " << controller_nh.getNamespace() + "/name"
                                          << " from parameter server");
       return false;
     }
@@ -95,11 +97,12 @@ namespace low_pass_force_torque_sensor_controller
         filtered_wrench[i] = filters_[i].filter(wrench_[i]);
       }
 
+      bool published = false;
+
       // try to publish
       if (realtime_wrench_pub_->trylock())
       {
-        // we're actually publishing, so increment time
-        last_publish_time_ = last_publish_time_ + ros::Duration(1.0 / publish_rate_);
+        published = true;
 
         // populate message
         realtime_wrench_pub_->msg_.header.stamp = time;
@@ -117,8 +120,7 @@ namespace low_pass_force_torque_sensor_controller
 
       // try to publish
       if (realtime_filter_pub_->trylock()) {
-        // we're actually publishing, so increment time
-        last_publish_time_ = last_publish_time_ + ros::Duration(1.0 / publish_rate_);
+        published = true;
 
         // populate message
         realtime_filter_pub_->msg_.header.stamp = time;
@@ -133,6 +135,10 @@ namespace low_pass_force_torque_sensor_controller
 
         realtime_filter_pub_->unlockAndPublish();
       }
+
+      if (published) {
+        last_publish_time_ = last_publish_time_ + ros::Duration(1.0 / publish_rate_);
+      }
     }
   }
 
@@ -144,11 +150,16 @@ namespace low_pass_force_torque_sensor_controller
                                                                               uint32_t level)
   {
     // Low-pass filters for the joint positions
+    filters_.clear();
     for (size_t i = 0; i < 6; ++i)
     {
-      filters_[i] = LowPassFilter(config.low_pass_filter_coeff);
+      filters_.emplace_back(config.low_pass_filter_coeff);
+    }
+    for (size_t i = 0; i < 6; ++i)
+    {
       filters_[i].reset(wrench_[i]);
-    }  
+    }
+
     ROS_INFO("%s low-pass filter coefficients changed to: %f", sensor_name_.c_str(), config.low_pass_filter_coeff);
   }
 
