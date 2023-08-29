@@ -42,6 +42,9 @@ add_library(${PROJECT_NAME}
   src/low_pass_force_torque_sensor_controller.cpp
   src/low_pass_filter.cpp
 )
+
+add_dependencies(${PROJECT_NAME} ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+
 target_link_libraries(${PROJECT_NAME} ${catkin_LIBRARIES})
 
 
